@@ -15,11 +15,30 @@ import { cn } from "@/lib/utils";
 import { MathProblemAnalysis, generateAIContent } from '@/services/AIService';
 
 interface CodeGeneratorProps {
-  // No props needed anymore as we'll handle AI generation internally
+  // No props needed as we handle everything internally
 }
+
+// LLM model options
+const LLM_MODELS = [
+  { value: "anthropic/claude-3-opus:beta", label: "Claude 3 Opus" },
+  { value: "anthropic/claude-3-sonnet:beta", label: "Claude 3 Sonnet" },
+  { value: "anthropic/claude-3-haiku:beta", label: "Claude 3 Haiku" },
+  { value: "google/gemini-1.5-pro", label: "Google Gemini 1.5 Pro" },
+  { value: "google/gemini-1.5-flash", label: "Google Gemini 1.5 Flash" },
+  { value: "meta-llama/llama-3-70b-instruct", label: "Llama 3 70B" },
+  { value: "meta-llama/llama-3-8b-instruct", label: "Llama 3 8B" },
+];
+
+// Question types
+const QUESTION_TYPES = [
+  { value: "multiple-choice", label: "Multiple Choice" },
+  // Add more question types in the future
+];
 
 const CodeGenerator: React.FC<CodeGeneratorProps> = () => {
   const [apiKey, setApiKey] = useState<string>("");
+  const [selectedModel, setSelectedModel] = useState<string>("anthropic/claude-3-opus:beta");
+  const [questionType, setQuestionType] = useState<string>("multiple-choice");
   const [questionNumber, setQuestionNumber] = useState<number>(1);
   const [teksStandard, setTeksStandard] = useState<string>("");
   const [questionText, setQuestionText] = useState<string>("");
@@ -34,16 +53,38 @@ const CodeGenerator: React.FC<CodeGeneratorProps> = () => {
   const [explanation, setExplanation] = useState<string>("");
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [copied, setCopied] = useState<boolean>(false);
-  const [codeTab, setCodeTab] = useState<string>("q_code");
+  const [codeTab, setCodeTab] = useState<string>("feedback_code");
   const [includeExtraCredit, setIncludeExtraCredit] = useState<boolean>(true);
   const [numberOfOptions, setNumberOfOptions] = useState<number>(4);
   const [generatedCode, setGeneratedCode] = useState<{ [key: string]: string }>({});
   const [aiPrompt, setAiPrompt] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
-  const [misconceptions, setMisconceptions] = useState<string[]>([]);
+  const [misconceptions, setMisconceptions] = useState<string[]>(["", "", ""]);
   const [currentTab, setCurrentTab] = useState<string>("question");
+  const [showModelSelector, setShowModelSelector] = useState<boolean>(false);
 
-  const optionLabels = ["A", "B", "C", "D", "E", "F", "G", "H"];
+  const optionLabels = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"];
+
+  // When API key is entered, show model selector
+  useEffect(() => {
+    if (apiKey) {
+      setShowModelSelector(true);
+    }
+  }, [apiKey]);
+
+  // Ensure we always have exactly 3 misconceptions for multiple choice
+  useEffect(() => {
+    if (questionType === "multiple-choice" && misconceptions.length !== 3) {
+      const newMisconceptions = [...misconceptions];
+      while (newMisconceptions.length < 3) {
+        newMisconceptions.push("");
+      }
+      while (newMisconceptions.length > 3) {
+        newMisconceptions.pop();
+      }
+      setMisconceptions(newMisconceptions);
+    }
+  }, [questionType, misconceptions]);
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -58,11 +99,8 @@ const CodeGenerator: React.FC<CodeGeneratorProps> = () => {
   };
 
   const generateCode = () => {
-    const teksCode = `hidden: when submit_button.pressCount>0 false otherwise true
-content: "${teksStandard}"`;
-
-    const mcCode = `disableChange: when submit_button.pressCount>0 true otherwise false
-correct: "${correctAnswer}"`;
+    // We're not generating question, TEKS, or multiple choice code anymore
+    // Only generate feedback, explanation, and misconceptions
 
     const feedbackCode = `hidden: when submit_button.pressCount>0 false otherwise true
 content: when submit_button.pressCount>0 and q${questionNumber}_mc.matchesKey "correct ✅" 
@@ -85,8 +123,6 @@ content: "${misconception.replace(/"/g, '\\"')}"`
     const allMisconceptionCodes = misconceptionCodes.reduce((acc, curr) => ({ ...acc, ...curr }), {});
 
     setGeneratedCode({
-      teks: teksCode,
-      mc: mcCode,
       feedback: feedbackCode,
       btn_ans: btnAnsCode,
       exp: expCode,
@@ -96,7 +132,7 @@ content: "${misconception.replace(/"/g, '\\"')}"`
 
     toast.success("Code generated successfully!");
     setCurrentTab("code");
-    setCodeTab("q_code");
+    setCodeTab("feedback_code");
   };
 
   const copyToClipboard = (text: string) => {
@@ -119,7 +155,28 @@ content: "${misconception.replace(/"/g, '\\"')}"`
 
     try {
       setLoading(true);
-      const result = await generateAIContent(apiKey, aiPrompt, questionImage || undefined);
+      
+      // Create a custom prompt based on the question type
+      let systemPrompt = "";
+      if (questionType === "multiple-choice") {
+        systemPrompt = `You are an expert math teacher analyzing a multiple-choice math problem. 
+        First, identify the correct answer choice (A, B, C, D, etc.), and explain why this is the correct answer.
+        Then, provide a clear, detailed explanation of how to solve this problem correctly step-by-step.
+        Finally, analyze EACH incorrect answer choice and explain the specific misconception or error that leads to that wrong answer.
+        
+        Format your response as JSON with the following structure:
+        {
+          "correctAnswer": "letter of correct option (A, B, C, etc.)",
+          "explanation": "detailed explanation of solution approach",
+          "misconceptions": [
+            "explanation of why option 1 is incorrect and what misconception it represents",
+            "explanation of why option 2 is incorrect and what misconception it represents",
+            "explanation of why option 3 is incorrect and what misconception it represents"
+          ]
+        }`;
+      }
+
+      const result = await generateAIContent(apiKey, systemPrompt, questionImage || undefined, selectedModel);
       
       // Set values from AI response
       if (result.explanation) {
@@ -179,6 +236,40 @@ content: "${misconception.replace(/"/g, '\\"')}"`
                   <p className="text-xs text-muted-foreground mt-1">
                     Get your API key from <a href="https://openrouter.ai" target="_blank" rel="noreferrer" className="text-primary hover:underline">openrouter.ai</a>
                   </p>
+                </div>
+
+                {showModelSelector && (
+                  <div>
+                    <Label htmlFor="llm-model">LLM Model</Label>
+                    <Select value={selectedModel} onValueChange={setSelectedModel}>
+                      <SelectTrigger className="desmos-input">
+                        <SelectValue placeholder="Select LLM model" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {LLM_MODELS.map((model) => (
+                          <SelectItem key={model.value} value={model.value}>
+                            {model.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+
+                <div>
+                  <Label htmlFor="question-type">Question Type</Label>
+                  <Select value={questionType} onValueChange={setQuestionType}>
+                    <SelectTrigger className="desmos-input">
+                      <SelectValue placeholder="Select question type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {QUESTION_TYPES.map((type) => (
+                        <SelectItem key={type.value} value={type.value}>
+                          {type.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
 
                 <div>
@@ -268,7 +359,7 @@ content: "${misconception.replace(/"/g, '\\"')}"`
                     <Slider 
                       id="number-of-options"
                       defaultValue={[4]} 
-                      max={8} 
+                      max={10} 
                       min={2}
                       step={1}
                       value={[numberOfOptions]}
@@ -363,40 +454,28 @@ content: "${misconception.replace(/"/g, '\\"')}"`
                 </div>
                 
                 <div className="space-y-4">
-                  <Label>Misconceptions</Label>
-                  {misconceptions.length > 0 ? (
-                    misconceptions.map((misconception, index) => (
-                      <div key={index} className="space-y-1">
-                        <Label htmlFor={`misconception-${index}`}>Misconception {index + 1}</Label>
-                        <Textarea
-                          id={`misconception-${index}`}
-                          value={misconception}
-                          onChange={(e) => {
-                            const newMisconceptions = [...misconceptions];
-                            newMisconceptions[index] = e.target.value;
-                            setMisconceptions(newMisconceptions);
-                          }}
-                          className="desmos-input min-h-[100px]"
-                          autoResize
-                        />
-                      </div>
-                    ))
-                  ) : (
-                    <div className="text-muted-foreground text-sm">
-                      No misconceptions generated yet. Go back to Question Setup tab and use AI to generate them.
+                  <Label>Misconceptions (Always 3 for Multiple Choice)</Label>
+                  {misconceptions.map((misconception, index) => (
+                    <div key={index} className="space-y-1">
+                      <Label htmlFor={`misconception-${index}`}>
+                        Misconception {index + 1} 
+                        {optionLabels[index] !== correctAnswer && optionLabels[index] 
+                          ? ` (Option ${optionLabels[index]})` 
+                          : ''}
+                      </Label>
+                      <Textarea
+                        id={`misconception-${index}`}
+                        value={misconception}
+                        onChange={(e) => {
+                          const newMisconceptions = [...misconceptions];
+                          newMisconceptions[index] = e.target.value;
+                          setMisconceptions(newMisconceptions);
+                        }}
+                        className="desmos-input min-h-[100px]"
+                        autoResize
+                      />
                     </div>
-                  )}
-                  
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setMisconceptions([...misconceptions, ""])}
-                    className="mt-2"
-                  >
-                    <PlusCircle className="h-4 w-4 mr-2" />
-                    Add Misconception
-                  </Button>
+                  ))}
                 </div>
               </div>
             </div>
@@ -404,13 +483,12 @@ content: "${misconception.replace(/"/g, '\\"')}"`
           
           <TabsContent value="code" className="animate-slide-up">
             <Tabs value={codeTab} onValueChange={setCodeTab}>
-              <TabsList className="grid grid-cols-6 mb-4">
-                <TabsTrigger value="q_code">Question</TabsTrigger>
-                <TabsTrigger value="teks_code">TEKS</TabsTrigger>
-                <TabsTrigger value="mc_code">Multiple Choice</TabsTrigger>
+              <TabsList className="grid grid-cols-5 mb-4">
                 <TabsTrigger value="feedback_code">Feedback</TabsTrigger>
                 <TabsTrigger value="btn_code">Buttons</TabsTrigger>
                 <TabsTrigger value="exp_code">Explanation</TabsTrigger>
+                <TabsTrigger value="err_1_code">Misconception 1</TabsTrigger>
+                <TabsTrigger value="err_2_code">Misconception 2</TabsTrigger>
               </TabsList>
 
               {Object.keys(generatedCode).length === 0 ? (
@@ -426,69 +504,6 @@ content: "${misconception.replace(/"/g, '\\"')}"`
                 </div>
               ) : (
                 <>
-                  {codeTab === "q_code" && (
-                    <div className="relative">
-                      <div className="absolute top-2 right-2">
-                        <Button 
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => copyToClipboard(`// For q${questionNumber}_qtn\n${generatedCode.teks}`)}
-                        >
-                          {copied ? (
-                            <Check className="h-4 w-4" />
-                          ) : (
-                            <Copy className="h-4 w-4" />
-                          )}
-                        </Button>
-                      </div>
-                      <div className="code-block">
-                        <pre>{`// For q${questionNumber}_qtn\n${generatedCode.teks}`}</pre>
-                      </div>
-                    </div>
-                  )}
-
-                  {codeTab === "teks_code" && (
-                    <div className="relative">
-                      <div className="absolute top-2 right-2">
-                        <Button 
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => copyToClipboard(`// For q${questionNumber}_teks\n${generatedCode.teks}`)}
-                        >
-                          {copied ? (
-                            <Check className="h-4 w-4" />
-                          ) : (
-                            <Copy className="h-4 w-4" />
-                          )}
-                        </Button>
-                      </div>
-                      <div className="code-block">
-                        <pre>{`// For q${questionNumber}_teks\n${generatedCode.teks}`}</pre>
-                      </div>
-                    </div>
-                  )}
-
-                  {codeTab === "mc_code" && (
-                    <div className="relative">
-                      <div className="absolute top-2 right-2">
-                        <Button 
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => copyToClipboard(`// For q${questionNumber}_mc\n${generatedCode.mc}`)}
-                        >
-                          {copied ? (
-                            <Check className="h-4 w-4" />
-                          ) : (
-                            <Copy className="h-4 w-4" />
-                          )}
-                        </Button>
-                      </div>
-                      <div className="code-block">
-                        <pre>{`// For q${questionNumber}_mc\n${generatedCode.mc}`}</pre>
-                      </div>
-                    </div>
-                  )}
-
                   {codeTab === "feedback_code" && (
                     <div className="relative">
                       <div className="absolute top-2 right-2">
@@ -552,13 +567,13 @@ content: "${misconception.replace(/"/g, '\\"')}"`
                     </div>
                   )}
                   
-                  {Object.keys(generatedCode).filter(key => key.includes('err_')).map((key, index) => (
-                    <div key={key} className={`relative ${codeTab !== `err_${index + 1}_code` ? 'hidden' : ''}`}>
+                  {[1, 2, 3].map((num) => (
+                    <div key={num} className={`relative ${codeTab !== `err_${num}_code` ? 'hidden' : ''}`}>
                       <div className="absolute top-2 right-2">
                         <Button 
                           variant="ghost"
                           size="icon"
-                          onClick={() => copyToClipboard(`// For q${questionNumber}_${key}\n${generatedCode[key]}`)}
+                          onClick={() => copyToClipboard(`// For q${questionNumber}_err_${num}_help\n${generatedCode[`err_${num}_help`] || ''}`)}
                         >
                           {copied ? (
                             <Check className="h-4 w-4" />
@@ -568,49 +583,11 @@ content: "${misconception.replace(/"/g, '\\"')}"`
                         </Button>
                       </div>
                       <div className="code-block">
-                        <pre>{`// For q${questionNumber}_${key}\n${generatedCode[key]}`}</pre>
+                        <pre>{`// For q${questionNumber}_err_${num}_help\n${generatedCode[`err_${num}_help`] || ''}`}</pre>
                       </div>
                     </div>
                   ))}
                 </>
-              )}
-              
-              {misconceptions.length > 0 && Object.keys(generatedCode).length > 0 && (
-                <div className="mt-8">
-                  <h3 className="font-medium mb-3">Misconception Codes</h3>
-                  <Tabs defaultValue="err_1_code">
-                    <TabsList className="mb-4">
-                      {misconceptions.map((_, index) => (
-                        <TabsTrigger key={index} value={`err_${index + 1}_code`}>
-                          Misconception {index + 1}
-                        </TabsTrigger>
-                      ))}
-                    </TabsList>
-                    
-                    {misconceptions.map((_, index) => (
-                      <TabsContent key={index} value={`err_${index + 1}_code`}>
-                        <div className="relative">
-                          <div className="absolute top-2 right-2">
-                            <Button 
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => copyToClipboard(`// For q${questionNumber}_err_${index + 1}_help\n${generatedCode[`err_${index + 1}_help`] || ''}`)}
-                            >
-                              {copied ? (
-                                <Check className="h-4 w-4" />
-                              ) : (
-                                <Copy className="h-4 w-4" />
-                              )}
-                            </Button>
-                          </div>
-                          <div className="code-block">
-                            <pre>{`// For q${questionNumber}_err_${index + 1}_help\n${generatedCode[`err_${index + 1}_help`] || ''}`}</pre>
-                          </div>
-                        </div>
-                      </TabsContent>
-                    ))}
-                  </Tabs>
-                </div>
               )}
             </Tabs>
           </TabsContent>
@@ -634,7 +611,7 @@ content: "${misconception.replace(/"/g, '\\"')}"`
             });
             setExplanation("");
             setGeneratedCode({});
-            setMisconceptions([]);
+            setMisconceptions(["", "", ""]);
           }}
         >
           Reset

@@ -16,22 +16,27 @@ export interface MathProblemAnalysis {
   correctAnswer?: string;
 }
 
-export async function generateAIContent(apiKey: string, prompt: string, image?: File): Promise<MathProblemAnalysis> {
+export async function generateAIContent(
+  apiKey: string, 
+  prompt: string, 
+  image?: File, 
+  model: string = "anthropic/claude-3-opus:beta"
+): Promise<MathProblemAnalysis> {
   // Enhanced system prompt that requests structured output
-  const systemPrompt = `You are an expert math teacher analyzing a math problem. 
+  const systemPrompt = prompt || `You are an expert math teacher analyzing a math problem. 
   First, identify the correct answer choice (A, B, C, D, etc.) if this is a multiple-choice question, and explain why.
   Then, provide a clear, detailed solution explaining the mathematical concepts and steps needed to solve this problem.
   Next, identify three common misconceptions students might have when approaching this problem, listing them separately.
-  For each misconception, explain what causes the error and how to fix it.
-  
-  Format your response with clear sections:
-  1. Correct Answer: (provide the letter if multiple choice or the answer if open-ended)
-  2. Explanation: (provide the detailed solution)
-  3. Misconceptions: (list three common misconceptions)`;
-
-  const fullPrompt = prompt 
-    ? `${systemPrompt}\n\nAdditional instructions: ${prompt}`
-    : systemPrompt;
+  Format your response as JSON with the following structure:
+  {
+    "correctAnswer": "letter of correct option (A, B, C, etc.)",
+    "explanation": "detailed explanation of solution approach",
+    "misconceptions": [
+      "explanation of misconception 1",
+      "explanation of misconception 2",
+      "explanation of misconception 3"
+    ]
+  }`;
 
   try {
     // First, prepare the image if provided
@@ -45,16 +50,16 @@ export async function generateAIContent(apiKey: string, prompt: string, image?: 
     const messages = [
       {
         role: "system",
-        content: fullPrompt
+        content: systemPrompt
       },
       {
         role: "user",
         content: image 
           ? [
-              { type: "text", text: "Analyze this math problem image and provide the solution and misconceptions:" },
+              { type: "text", text: "Analyze this math problem image and provide the solution and misconceptions in JSON format:" },
               { type: "image_url", image_url: { url: base64Image }}
             ]
-          : "Provide a solution and misconceptions for the described math problem:"
+          : "Provide a solution and misconceptions for the described math problem in JSON format:"
       }
     ];
 
@@ -66,10 +71,11 @@ export async function generateAIContent(apiKey: string, prompt: string, image?: 
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model: "anthropic/claude-3-opus:beta",
+        model: model,
         messages: messages,
         temperature: 0.3,
-        max_tokens: 1500
+        max_tokens: 2000,
+        response_format: { type: "json_object" }
       })
     });
 
@@ -86,10 +92,28 @@ export async function generateAIContent(apiKey: string, prompt: string, image?: 
 
     const content = data.choices[0].message.content;
     
-    // Process the response to extract explanation and misconceptions
-    const result = parseAIResponse(content);
-    
-    return result;
+    // Try to parse the JSON response directly
+    try {
+      const jsonResponse = JSON.parse(content);
+      const result: MathProblemAnalysis = {
+        explanation: jsonResponse.explanation || '',
+        misconceptions: jsonResponse.misconceptions || [],
+        correctAnswer: jsonResponse.correctAnswer
+      };
+      
+      // Ensure we have exactly 3 misconceptions for multiple choice questions
+      if (result.misconceptions.length < 3) {
+        while (result.misconceptions.length < 3) {
+          result.misconceptions.push('');
+        }
+      }
+      
+      return result;
+    } catch (jsonError) {
+      console.error('Error parsing JSON response:', jsonError);
+      // Fallback to text parsing if JSON parsing fails
+      return parseAIResponse(content);
+    }
   } catch (error) {
     console.error('Error generating AI content:', error);
     toast.error(error instanceof Error ? error.message : 'Failed to generate content');
@@ -101,7 +125,7 @@ function parseAIResponse(response: string): MathProblemAnalysis {
   // Initialize default return values
   const result: MathProblemAnalysis = {
     explanation: '',
-    misconceptions: [],
+    misconceptions: ['', '', ''],
     correctAnswer: undefined
   };
   
@@ -141,28 +165,26 @@ function parseAIResponse(response: string): MathProblemAnalysis {
     const misconceptionItems = misconceptionSection.split(/(?:\n|^)(?:\d+\.|\*|\-)\s+/);
     
     // Filter out the header and empty items, then clean up the text
-    result.misconceptions = misconceptionItems
+    const extractedMisconceptions = misconceptionItems
       .slice(1) // Skip the section header
       .filter(item => item.trim().length > 0)
       .map(item => item.trim());
+      
+    // Add found misconceptions up to 3
+    for (let i = 0; i < Math.min(3, extractedMisconceptions.length); i++) {
+      result.misconceptions[i] = extractedMisconceptions[i];
+    }
   }
   
   // If we couldn't find misconceptions as list items, try to identify paragraphs
-  if (result.misconceptions.length === 0 && misconceptionSection) {
-    result.misconceptions = misconceptionSection
+  if (result.misconceptions.every(m => !m)) {
+    const paragraphs = response
       .split(/\n\n+/)
-      .slice(1) // Skip the header
-      .filter(paragraph => paragraph.trim().length > 50)
-      .map(paragraph => paragraph.trim());
-  }
-  
-  // If we still couldn't parse properly, extract misconceptions from the full text
-  if (result.misconceptions.length === 0) {
-    const matches = response.match(/(?:misconception|mistake|error)[^\n]*\n+([^#]+?)(?=\n+(?:#|\d+\.|$))/gi);
-    if (matches && matches.length > 0) {
-      result.misconceptions = matches.map(match => 
-        match.replace(/^[^\n]+\n+/, '').trim()
-      );
+      .filter(paragraph => paragraph.trim().length > 50 && /misconception|mistake|error/i.test(paragraph));
+      
+    // Add found misconceptions up to 3
+    for (let i = 0; i < Math.min(3, paragraphs.length); i++) {
+      result.misconceptions[i] = paragraphs[i].trim();
     }
   }
   
