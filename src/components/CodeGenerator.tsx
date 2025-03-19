@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -11,14 +12,13 @@ import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import { Copy, Check, Code, Upload, PlusCircle, Wand2, Loader } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { MathProblemAnalysis } from '@/services/AIService';
+import { MathProblemAnalysis, generateAIContent } from '@/services/AIService';
 
 interface CodeGeneratorProps {
-  onGenerateAI: (apiKey: string, prompt: string, image?: File) => Promise<MathProblemAnalysis>;
-  aiResult: MathProblemAnalysis | null;
+  // No props needed anymore as we'll handle AI generation internally
 }
 
-const CodeGenerator: React.FC<CodeGeneratorProps> = ({ onGenerateAI, aiResult }) => {
+const CodeGenerator: React.FC<CodeGeneratorProps> = () => {
   const [apiKey, setApiKey] = useState<string>("");
   const [questionNumber, setQuestionNumber] = useState<number>(1);
   const [teksStandard, setTeksStandard] = useState<string>("");
@@ -41,22 +41,9 @@ const CodeGenerator: React.FC<CodeGeneratorProps> = ({ onGenerateAI, aiResult })
   const [aiPrompt, setAiPrompt] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
   const [misconceptions, setMisconceptions] = useState<string[]>([]);
+  const [currentTab, setCurrentTab] = useState<string>("question");
 
   const optionLabels = ["A", "B", "C", "D", "E", "F", "G", "H"];
-
-  useEffect(() => {
-    if (aiResult) {
-      if (aiResult.explanation) {
-        setExplanation(aiResult.explanation);
-      }
-      if (aiResult.misconceptions && aiResult.misconceptions.length > 0) {
-        setMisconceptions(aiResult.misconceptions);
-      }
-      if (aiResult.correctAnswer) {
-        setCorrectAnswer(aiResult.correctAnswer);
-      }
-    }
-  }, [aiResult]);
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -108,6 +95,7 @@ content: "${misconception.replace(/"/g, '\\"')}"`
     });
 
     toast.success("Code generated successfully!");
+    setCurrentTab("code");
     setCodeTab("q_code");
   };
 
@@ -131,8 +119,23 @@ content: "${misconception.replace(/"/g, '\\"')}"`
 
     try {
       setLoading(true);
-      await onGenerateAI(apiKey, aiPrompt, questionImage || undefined);
-      toast.success("AI content generated!");
+      const result = await generateAIContent(apiKey, aiPrompt, questionImage || undefined);
+      
+      // Set values from AI response
+      if (result.explanation) {
+        setExplanation(result.explanation);
+      }
+      
+      if (result.misconceptions && result.misconceptions.length > 0) {
+        setMisconceptions(result.misconceptions);
+      }
+      
+      if (result.correctAnswer) {
+        setCorrectAnswer(result.correctAnswer);
+      }
+      
+      toast.success("Content generated successfully! Now you can review and generate code.");
+      setCurrentTab("answers");
     } catch (error) {
       toast.error("Failed to generate AI content");
       console.error(error);
@@ -152,7 +155,7 @@ content: "${misconception.replace(/"/g, '\\"')}"`
         </CardDescription>
       </CardHeader>
       <CardContent className="pt-6">
-        <Tabs defaultValue="question" className="w-full">
+        <Tabs value={currentTab} onValueChange={setCurrentTab} className="w-full">
           <TabsList className="grid grid-cols-3 mb-6">
             <TabsTrigger value="question">Question Setup</TabsTrigger>
             <TabsTrigger value="answers">Answers & Content</TabsTrigger>
@@ -162,6 +165,22 @@ content: "${misconception.replace(/"/g, '\\"')}"`
           <TabsContent value="question" className="space-y-4 animate-slide-up">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="space-y-4">
+                <div>
+                  <Label htmlFor="api-key">OpenRouter API Key</Label>
+                  <Input
+                    id="api-key"
+                    type="password"
+                    placeholder="Enter your OpenRouter API key"
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                    className="desmos-input"
+                    required
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Get your API key from <a href="https://openrouter.ai" target="_blank" rel="noreferrer" className="text-primary hover:underline">openrouter.ai</a>
+                  </p>
+                </div>
+
                 <div>
                   <Label htmlFor="question-number">Question Number</Label>
                   <Input 
@@ -192,7 +211,19 @@ content: "${misconception.replace(/"/g, '\\"')}"`
                     placeholder="Enter the question text here..." 
                     value={questionText}
                     onChange={(e) => setQuestionText(e.target.value)}
-                    className="desmos-input min-h-[150px]"
+                    className="desmos-input min-h-[100px]"
+                    autoResize
+                  />
+                </div>
+
+                <div className="pt-2">
+                  <Label htmlFor="ai-prompt">Additional Instructions for AI (Optional)</Label>
+                  <Textarea
+                    id="ai-prompt"
+                    placeholder="Additional instructions for the AI analysis"
+                    value={aiPrompt}
+                    onChange={(e) => setAiPrompt(e.target.value)}
+                    className="desmos-input"
                     autoResize
                   />
                 </div>
@@ -256,6 +287,24 @@ content: "${misconception.replace(/"/g, '\\"')}"`
                   />
                   <Label htmlFor="extra-credit">Include Extra Credit</Label>
                 </div>
+
+                <Button 
+                  onClick={handleGenerateAI}
+                  className="desmos-button w-full mt-4"
+                  disabled={(!questionImage && !questionText) || !apiKey || loading}
+                >
+                  {loading ? (
+                    <>
+                      <Loader className="mr-2 h-4 w-4 animate-spin" />
+                      Analyzing with AI...
+                    </>
+                  ) : (
+                    <>
+                      <Wand2 className="mr-2 h-4 w-4" />
+                      Generate Solution & Misconceptions
+                    </>
+                  )}
+                </Button>
               </div>
             </div>
           </TabsContent>
@@ -334,7 +383,7 @@ content: "${misconception.replace(/"/g, '\\"')}"`
                     ))
                   ) : (
                     <div className="text-muted-foreground text-sm">
-                      No misconceptions generated yet. Use AI to generate them.
+                      No misconceptions generated yet. Go back to Question Setup tab and use AI to generate them.
                     </div>
                   )}
                   
@@ -350,67 +399,6 @@ content: "${misconception.replace(/"/g, '\\"')}"`
                   </Button>
                 </div>
               </div>
-            </div>
-
-            <div className="pt-6 border-t space-y-4">
-              <div className="flex justify-between items-center">
-                <h3 className="text-lg font-medium">AI-powered Generation</h3>
-              </div>
-              
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <Label htmlFor="api-key" className="text-sm font-medium">
-                    OpenRouter API Key
-                  </Label>
-                  <Input
-                    id="api-key"
-                    type="password"
-                    placeholder="Enter your OpenRouter API key"
-                    value={apiKey}
-                    onChange={(e) => setApiKey(e.target.value)}
-                    className="desmos-input mt-1"
-                  />
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Get your API key from <a href="https://openrouter.ai" target="_blank" rel="noreferrer" className="text-primary hover:underline">openrouter.ai</a>
-                  </p>
-                </div>
-                
-                <div>
-                  <Label htmlFor="ai-prompt" className="text-sm font-medium">
-                    Additional Instructions (Optional)
-                  </Label>
-                  <Textarea
-                    id="ai-prompt"
-                    placeholder="Additional instructions for the AI"
-                    value={aiPrompt}
-                    onChange={(e) => setAiPrompt(e.target.value)}
-                    className="desmos-input mt-1"
-                    autoResize
-                  />
-                </div>
-              </div>
-              
-              <Button 
-                onClick={handleGenerateAI}
-                className="desmos-button w-full"
-                disabled={(!questionImage && !questionText) || !apiKey || loading}
-              >
-                {loading ? (
-                  <>
-                    <Loader className="mr-2 h-4 w-4 animate-spin" />
-                    Generating...
-                  </>
-                ) : (
-                  <>
-                    <Wand2 className="mr-2 h-4 w-4" />
-                    Generate Solution & Misconceptions
-                  </>
-                )}
-              </Button>
-              
-              <p className="text-sm text-muted-foreground">
-                Upload a question image or provide question text to generate the correct answer, explanation, and common misconceptions using AI.
-              </p>
             </div>
           </TabsContent>
           

@@ -1,42 +1,9 @@
 
-import React, { useState } from 'react';
+import React from 'react';
 import CodeGenerator from '@/components/CodeGenerator';
-import AIGenerator from '@/components/AIGenerator';
 import NavBar from '@/components/NavBar';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { generateAIContent, MathProblemAnalysis } from '@/services/AIService';
-import { toast } from 'sonner';
 
 const Index = () => {
-  const [currentTab, setCurrentTab] = useState<string>("generator");
-  const [loading, setLoading] = useState<boolean>(false);
-  const [aiResult, setAiResult] = useState<MathProblemAnalysis | null>(null);
-
-  const handleAISubmit = async (apiKey: string, prompt: string, image?: File) => {
-    try {
-      setLoading(true);
-      
-      const result = await generateAIContent(apiKey, prompt, image);
-      
-      setAiResult(result);
-      
-      toast.success("Content generated successfully!");
-      
-      // Switch to the appropriate tab if we're on the AI tab
-      if (currentTab === "ai") {
-        // No need to switch tabs here
-      }
-      
-      return result;
-    } catch (error) {
-      console.error(error);
-      toast.error("Failed to generate content");
-      throw error;
-    } finally {
-      setLoading(false);
-    }
-  };
-
   return (
     <div className="min-h-screen flex flex-col bg-gradient-to-b from-background to-muted/30">
       <NavBar />
@@ -49,27 +16,7 @@ const Index = () => {
           </p>
         </div>
         
-        <Tabs value={currentTab} onValueChange={setCurrentTab} className="w-full max-w-4xl mx-auto">
-          <TabsList className="grid w-full grid-cols-2 mb-8">
-            <TabsTrigger value="generator">Code Generator</TabsTrigger>
-            <TabsTrigger value="ai">AI Content Generator</TabsTrigger>
-          </TabsList>
-          
-          <TabsContent value="generator" className="mt-0">
-            <CodeGenerator 
-              onGenerateAI={handleAISubmit}
-              aiResult={aiResult} 
-            />
-          </TabsContent>
-          
-          <TabsContent value="ai" className="mt-0">
-            <AIGenerator 
-              onSubmit={handleAISubmit}
-              loading={loading}
-              result={aiResult}
-            />
-          </TabsContent>
-        </Tabs>
+        <CodeGenerator />
         
         <footer className="mt-12 text-center text-sm text-muted-foreground">
           <p>Desmos Code Hub - STAAR Blitz Code Generator</p>
