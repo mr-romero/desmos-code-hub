@@ -10,33 +10,92 @@ interface OpenRouterResponse {
   }>;
 }
 
+interface OpenRouterModel {
+  id: string;
+  name: string;
+}
+
+interface OpenRouterModelsResponse {
+  data: OpenRouterModel[];
+}
+
 export interface MathProblemAnalysis {
   explanation: string;
   misconceptions: string[];
   correctAnswer?: string;
 }
 
+export async function fetchAvailableModels(apiKey: string): Promise<OpenRouterModel[]> {
+  try {
+    const response = await fetch('https://openrouter.ai/api/v1/models', {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error?.message || 'Failed to fetch models');
+    }
+
+    const data = await response.json() as OpenRouterModelsResponse;
+    
+    return data.data.map(model => ({
+      id: model.id,
+      name: model.name
+    }));
+  } catch (error) {
+    console.error('Error fetching models:', error);
+    toast.error(error instanceof Error ? error.message : 'Failed to fetch models');
+    throw error;
+  }
+}
+
 export async function generateAIContent(
   apiKey: string, 
   prompt: string, 
   image?: File, 
-  model: string = "anthropic/claude-3-opus:beta"
+  model: string = "anthropic/claude-3-opus:beta",
+  questionType: string = "multiple-choice"
 ): Promise<MathProblemAnalysis> {
-  // Enhanced system prompt that requests structured output
-  const systemPrompt = prompt || `You are an expert math teacher analyzing a math problem. 
-  First, identify the correct answer choice (A, B, C, D, etc.) if this is a multiple-choice question, and explain why.
-  Then, provide a clear, detailed solution explaining the mathematical concepts and steps needed to solve this problem.
-  Next, identify three common misconceptions students might have when approaching this problem, listing them separately.
-  Format your response as JSON with the following structure:
-  {
-    "correctAnswer": "letter of correct option (A, B, C, etc.)",
-    "explanation": "detailed explanation of solution approach",
-    "misconceptions": [
-      "explanation of misconception 1",
-      "explanation of misconception 2",
-      "explanation of misconception 3"
-    ]
-  }`;
+  // Create system prompt based on question type
+  let systemPrompt = prompt || "";
+  
+  if (questionType === "multiple-choice") {
+    systemPrompt = `You are an expert math teacher analyzing a multiple-choice math problem. 
+    First, identify the correct answer choice (A, B, C, D, etc.), and explain why this is the correct answer.
+    Then, provide a clear, detailed explanation of how to solve this problem correctly step-by-step.
+    Finally, analyze EACH incorrect answer choice and explain the specific misconception or error that leads to that wrong answer.
+    
+    Format your response as JSON with the following structure:
+    {
+      "correctAnswer": "letter of correct option (A, B, C, etc.)",
+      "explanation": "detailed explanation of solution approach",
+      "misconceptions": [
+        "explanation of why option 1 is incorrect and what misconception it represents",
+        "explanation of why option 2 is incorrect and what misconception it represents",
+        "explanation of why option 3 is incorrect and what misconception it represents"
+      ]
+    }`;
+  } else if (questionType === "equation") {
+    systemPrompt = `You are an expert math teacher analyzing an equation problem where students need to provide a correct equation as their answer.
+    First, identify the correct equation that solves this problem.
+    Then, provide a clear, detailed explanation with **bold titles for each step** of how to solve this problem correctly.
+    Finally, identify THREE common misconceptions students might have when solving this type of equation problem.
+    
+    Format your response as JSON with the following structure:
+    {
+      "correctAnswer": "the correct equation",
+      "explanation": "detailed explanation of solution approach with **bold titles for each step**",
+      "misconceptions": [
+        "explanation of misconception 1 when solving this equation",
+        "explanation of misconception 2 when solving this equation",
+        "explanation of misconception 3 when solving this equation"
+      ]
+    }`;
+  }
 
   try {
     // First, prepare the image if provided
@@ -101,7 +160,7 @@ export async function generateAIContent(
         correctAnswer: jsonResponse.correctAnswer
       };
       
-      // Ensure we have exactly 3 misconceptions for multiple choice questions
+      // Ensure we have exactly 3 misconceptions
       if (result.misconceptions.length < 3) {
         while (result.misconceptions.length < 3) {
           result.misconceptions.push('');

@@ -12,32 +12,27 @@ import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import { Copy, Check, Code, Upload, PlusCircle, Wand2, Loader } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { MathProblemAnalysis, generateAIContent } from '@/services/AIService';
+import { MathProblemAnalysis, generateAIContent, fetchAvailableModels } from '@/services/AIService';
 
 interface CodeGeneratorProps {
   // No props needed as we handle everything internally
 }
 
-// LLM model options
-const LLM_MODELS = [
-  { value: "anthropic/claude-3-opus:beta", label: "Claude 3 Opus" },
-  { value: "anthropic/claude-3-sonnet:beta", label: "Claude 3 Sonnet" },
-  { value: "anthropic/claude-3-haiku:beta", label: "Claude 3 Haiku" },
-  { value: "google/gemini-1.5-pro", label: "Google Gemini 1.5 Pro" },
-  { value: "google/gemini-1.5-flash", label: "Google Gemini 1.5 Flash" },
-  { value: "meta-llama/llama-3-70b-instruct", label: "Llama 3 70B" },
-  { value: "meta-llama/llama-3-8b-instruct", label: "Llama 3 8B" },
-];
+interface Model {
+  id: string;
+  name: string;
+}
 
 // Question types
 const QUESTION_TYPES = [
   { value: "multiple-choice", label: "Multiple Choice" },
-  // Add more question types in the future
+  { value: "equation", label: "Equation" },
 ];
 
 const CodeGenerator: React.FC<CodeGeneratorProps> = () => {
   const [apiKey, setApiKey] = useState<string>("");
-  const [selectedModel, setSelectedModel] = useState<string>("anthropic/claude-3-opus:beta");
+  const [availableModels, setAvailableModels] = useState<Model[]>([]);
+  const [selectedModel, setSelectedModel] = useState<string>("");
   const [questionType, setQuestionType] = useState<string>("multiple-choice");
   const [questionNumber, setQuestionNumber] = useState<number>(1);
   const [teksStandard, setTeksStandard] = useState<string>("");
@@ -59,22 +54,45 @@ const CodeGenerator: React.FC<CodeGeneratorProps> = () => {
   const [generatedCode, setGeneratedCode] = useState<{ [key: string]: string }>({});
   const [aiPrompt, setAiPrompt] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
+  const [loadingModels, setLoadingModels] = useState<boolean>(false);
   const [misconceptions, setMisconceptions] = useState<string[]>(["", "", ""]);
   const [currentTab, setCurrentTab] = useState<string>("question");
   const [showModelSelector, setShowModelSelector] = useState<boolean>(false);
 
   const optionLabels = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"];
 
-  // When API key is entered, show model selector
+  // Fetch models when API key is entered
   useEffect(() => {
-    if (apiKey) {
-      setShowModelSelector(true);
-    }
+    const fetchModels = async () => {
+      if (apiKey) {
+        try {
+          setLoadingModels(true);
+          const models = await fetchAvailableModels(apiKey);
+          setAvailableModels(models);
+          
+          // Set default model if we have models and none is selected
+          if (models.length > 0 && !selectedModel) {
+            // Try to find Claude 3 Opus as default, or use the first model
+            const defaultModel = models.find(m => m.id === "anthropic/claude-3-opus:beta") || models[0];
+            setSelectedModel(defaultModel.id);
+          }
+          
+          setShowModelSelector(true);
+        } catch (error) {
+          console.error("Failed to fetch models:", error);
+          toast.error("Failed to fetch models. Please check your API key.");
+        } finally {
+          setLoadingModels(false);
+        }
+      }
+    };
+
+    fetchModels();
   }, [apiKey]);
 
-  // Ensure we always have exactly 3 misconceptions for multiple choice
+  // Ensure we always have exactly 3 misconceptions
   useEffect(() => {
-    if (questionType === "multiple-choice" && misconceptions.length !== 3) {
+    if (misconceptions.length !== 3) {
       const newMisconceptions = [...misconceptions];
       while (newMisconceptions.length < 3) {
         newMisconceptions.push("");
@@ -84,7 +102,7 @@ const CodeGenerator: React.FC<CodeGeneratorProps> = () => {
       }
       setMisconceptions(newMisconceptions);
     }
-  }, [questionType, misconceptions]);
+  }, [misconceptions]);
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -153,30 +171,21 @@ content: "${misconception.replace(/"/g, '\\"')}"`
       return;
     }
 
+    if (!selectedModel) {
+      toast.error("Please select an LLM model");
+      return;
+    }
+
     try {
       setLoading(true);
       
-      // Create a custom prompt based on the question type
-      let systemPrompt = "";
-      if (questionType === "multiple-choice") {
-        systemPrompt = `You are an expert math teacher analyzing a multiple-choice math problem. 
-        First, identify the correct answer choice (A, B, C, D, etc.), and explain why this is the correct answer.
-        Then, provide a clear, detailed explanation of how to solve this problem correctly step-by-step.
-        Finally, analyze EACH incorrect answer choice and explain the specific misconception or error that leads to that wrong answer.
-        
-        Format your response as JSON with the following structure:
-        {
-          "correctAnswer": "letter of correct option (A, B, C, etc.)",
-          "explanation": "detailed explanation of solution approach",
-          "misconceptions": [
-            "explanation of why option 1 is incorrect and what misconception it represents",
-            "explanation of why option 2 is incorrect and what misconception it represents",
-            "explanation of why option 3 is incorrect and what misconception it represents"
-          ]
-        }`;
-      }
-
-      const result = await generateAIContent(apiKey, systemPrompt, questionImage || undefined, selectedModel);
+      const result = await generateAIContent(
+        apiKey, 
+        aiPrompt, 
+        questionImage || undefined, 
+        selectedModel,
+        questionType
+      );
       
       // Set values from AI response
       if (result.explanation) {
@@ -188,7 +197,12 @@ content: "${misconception.replace(/"/g, '\\"')}"`
       }
       
       if (result.correctAnswer) {
-        setCorrectAnswer(result.correctAnswer);
+        if (questionType === "multiple-choice") {
+          setCorrectAnswer(result.correctAnswer);
+        } else {
+          // For equation type, store it in option A
+          handleOptionChange("A", result.correctAnswer);
+        }
       }
       
       toast.success("Content generated successfully! Now you can review and generate code.");
@@ -238,7 +252,14 @@ content: "${misconception.replace(/"/g, '\\"')}"`
                   </p>
                 </div>
 
-                {showModelSelector && (
+                {loadingModels && (
+                  <div className="flex items-center justify-center py-2">
+                    <Loader className="h-5 w-5 animate-spin mr-2" />
+                    <span>Loading available models...</span>
+                  </div>
+                )}
+
+                {showModelSelector && availableModels.length > 0 && (
                   <div>
                     <Label htmlFor="llm-model">LLM Model</Label>
                     <Select value={selectedModel} onValueChange={setSelectedModel}>
@@ -246,9 +267,9 @@ content: "${misconception.replace(/"/g, '\\"')}"`
                         <SelectValue placeholder="Select LLM model" />
                       </SelectTrigger>
                       <SelectContent>
-                        {LLM_MODELS.map((model) => (
-                          <SelectItem key={model.value} value={model.value}>
-                            {model.label}
+                        {availableModels.map((model) => (
+                          <SelectItem key={model.id} value={model.id}>
+                            {model.name}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -353,22 +374,24 @@ content: "${misconception.replace(/"/g, '\\"')}"`
                   />
                 </div>
 
-                <div className="pt-4">
-                  <Label htmlFor="number-of-options" className="mb-2 block">Number of Options</Label>
-                  <div className="flex items-center space-x-2">
-                    <Slider 
-                      id="number-of-options"
-                      defaultValue={[4]} 
-                      max={10} 
-                      min={2}
-                      step={1}
-                      value={[numberOfOptions]}
-                      onValueChange={(value) => setNumberOfOptions(value[0])}
-                      className="flex-1"
-                    />
-                    <span className="w-8 text-center">{numberOfOptions}</span>
+                {questionType === "multiple-choice" && (
+                  <div className="pt-4">
+                    <Label htmlFor="number-of-options" className="mb-2 block">Number of Options</Label>
+                    <div className="flex items-center space-x-2">
+                      <Slider 
+                        id="number-of-options"
+                        defaultValue={[4]} 
+                        max={10} 
+                        min={2}
+                        step={1}
+                        value={[numberOfOptions]}
+                        onValueChange={(value) => setNumberOfOptions(value[0])}
+                        className="flex-1"
+                      />
+                      <span className="w-8 text-center">{numberOfOptions}</span>
+                    </div>
                   </div>
-                </div>
+                )}
 
                 <div className="flex items-center space-x-2 pt-2">
                   <Switch 
@@ -382,7 +405,7 @@ content: "${misconception.replace(/"/g, '\\"')}"`
                 <Button 
                   onClick={handleGenerateAI}
                   className="desmos-button w-full mt-4"
-                  disabled={(!questionImage && !questionText) || !apiKey || loading}
+                  disabled={(!questionImage && !questionText) || !apiKey || !selectedModel || loading}
                 >
                   {loading ? (
                     <>
@@ -403,41 +426,57 @@ content: "${misconception.replace(/"/g, '\\"')}"`
           <TabsContent value="answers" className="space-y-6 animate-slide-up">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="space-y-4">
-                <div>
-                  <Label>Correct Answer</Label>
-                  <Select value={correctAnswer} onValueChange={setCorrectAnswer}>
-                    <SelectTrigger className="desmos-input">
-                      <SelectValue placeholder="Select correct answer" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {optionLabels.slice(0, numberOfOptions).map((option) => (
-                        <SelectItem key={option} value={option}>
-                          Option {option}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
+                {questionType === "multiple-choice" ? (
+                  <>
+                    <div>
+                      <Label>Correct Answer</Label>
+                      <Select value={correctAnswer} onValueChange={setCorrectAnswer}>
+                        <SelectTrigger className="desmos-input">
+                          <SelectValue placeholder="Select correct answer" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {optionLabels.slice(0, numberOfOptions).map((option) => (
+                            <SelectItem key={option} value={option}>
+                              Option {option}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
 
-                <div className="space-y-3">
-                  <Label>Answer Options</Label>
-                  {optionLabels.slice(0, numberOfOptions).map((option) => (
-                    <div key={option} className="flex items-center gap-2">
-                      <span className={cn(
-                        "flex items-center justify-center w-8 h-8 rounded-full text-white",
-                        option === correctAnswer ? "bg-desmos-green" : "bg-desmos-gray"
-                      )}>
-                        {option}
-                      </span>
+                    <div className="space-y-3">
+                      <Label>Answer Options</Label>
+                      {optionLabels.slice(0, numberOfOptions).map((option) => (
+                        <div key={option} className="flex items-center gap-2">
+                          <span className={cn(
+                            "flex items-center justify-center w-8 h-8 rounded-full text-white",
+                            option === correctAnswer ? "bg-desmos-green" : "bg-desmos-gray"
+                          )}>
+                            {option}
+                          </span>
+                          <Input 
+                            placeholder={`Option ${option} content`}
+                            value={options[option] || ""}
+                            onChange={(e) => handleOptionChange(option, e.target.value)}
+                            className="desmos-input flex-1"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div>
+                      <Label>Correct Equation</Label>
                       <Input 
-                        placeholder={`Option ${option} content`}
-                        value={options[option] || ""}
-                        onChange={(e) => handleOptionChange(option, e.target.value)}
-                        className="desmos-input flex-1"
+                        placeholder="Enter the correct equation"
+                        value={options["A"] || ""}
+                        onChange={(e) => handleOptionChange("A", e.target.value)}
+                        className="desmos-input"
                       />
                     </div>
-                  ))}
-                </div>
+                  </>
+                )}
               </div>
 
               <div className="space-y-4">
@@ -454,12 +493,12 @@ content: "${misconception.replace(/"/g, '\\"')}"`
                 </div>
                 
                 <div className="space-y-4">
-                  <Label>Misconceptions (Always 3 for Multiple Choice)</Label>
+                  <Label>Misconceptions (3)</Label>
                   {misconceptions.map((misconception, index) => (
                     <div key={index} className="space-y-1">
                       <Label htmlFor={`misconception-${index}`}>
                         Misconception {index + 1} 
-                        {optionLabels[index] !== correctAnswer && optionLabels[index] 
+                        {questionType === "multiple-choice" && optionLabels[index] !== correctAnswer && optionLabels[index] 
                           ? ` (Option ${optionLabels[index]})` 
                           : ''}
                       </Label>
