@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -10,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
-import { Copy, Check, Code, Upload, PlusCircle, Wand2 } from "lucide-react";
+import { Copy, Check, Code, Upload, PlusCircle, Wand2, Loader } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MathProblemAnalysis } from '@/services/AIService';
 
@@ -45,7 +44,6 @@ const CodeGenerator: React.FC<CodeGeneratorProps> = ({ onGenerateAI, aiResult })
 
   const optionLabels = ["A", "B", "C", "D", "E", "F", "G", "H"];
 
-  // Effect to update form when AI result changes
   useEffect(() => {
     if (aiResult) {
       if (aiResult.explanation) {
@@ -73,32 +71,25 @@ const CodeGenerator: React.FC<CodeGeneratorProps> = ({ onGenerateAI, aiResult })
   };
 
   const generateCode = () => {
-    // Question TEKS code
     const teksCode = `hidden: when submit_button.pressCount>0 false otherwise true
 content: "${teksStandard}"`;
 
-    // Multiple choice code
     const mcCode = `disableChange: when submit_button.pressCount>0 true otherwise false
 correct: "${correctAnswer}"`;
 
-    // Feedback note code
     const feedbackCode = `hidden: when submit_button.pressCount>0 false otherwise true
 content: when submit_button.pressCount>0 and q${questionNumber}_mc.matchesKey "correct ✅" 
 when submit_button.pressCount>0 and not(q${questionNumber}_mc.matchesKey) "incorrect ❌"
 otherwise ""`;
 
-    // Button answer code
     const btnAnsCode = `hidden: when (submit_button.pressCount>0 and not(q${questionNumber}_mc.matchesKey)) false otherwise true
 style: buttonStyles.white`;
 
-    // Explanation code
     const expCode = `hidden: when (submit_button.pressCount>0 and q${questionNumber}_btn_ans.pressCount>0) false otherwise true
 content: "${explanation.replace(/"/g, '\\"')}"`;
 
-    // Extra credit code
     const ecCode = `hidden: when (submit_button.pressCount>0 and q${questionNumber}_btn_ans.pressCount>0 and not(q${questionNumber}_mc.matchesKey)) false otherwise true`;
 
-    // Misconceptions codes
     const misconceptionCodes = misconceptions.map((misconception, index) => ({
       [`err_${index + 1}_help`]: `hidden: when (submit_button.pressCount>0 and q${questionNumber}_btn_ans.pressCount>0 and not(q${questionNumber}_mc.matchesKey)) false otherwise true
 content: "${misconception.replace(/"/g, '\\"')}"`
@@ -406,7 +397,7 @@ content: "${misconception.replace(/"/g, '\\"')}"`
               >
                 {loading ? (
                   <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    <Loader className="mr-2 h-4 w-4 animate-spin" />
                     Generating...
                   </>
                 ) : (
@@ -573,7 +564,6 @@ content: "${misconception.replace(/"/g, '\\"')}"`
                     </div>
                   )}
                   
-                  {/* Add misconception codes display */}
                   {Object.keys(generatedCode).filter(key => key.includes('err_')).map((key, index) => (
                     <div key={key} className={`relative ${codeTab !== `err_${index + 1}_code` ? 'hidden' : ''}`}>
                       <div className="absolute top-2 right-2">
@@ -597,7 +587,6 @@ content: "${misconception.replace(/"/g, '\\"')}"`
                 </>
               )}
               
-              {/* Add tabs for misconceptions if they exist */}
               {misconceptions.length > 0 && Object.keys(generatedCode).length > 0 && (
                 <div className="mt-8">
                   <h3 className="font-medium mb-3">Misconception Codes</h3>
