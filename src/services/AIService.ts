@@ -10,15 +10,24 @@ interface OpenRouterResponse {
   }>;
 }
 
-export async function generateAIContent(apiKey: string, prompt: string, image?: File): Promise<{ 
+export interface MathProblemAnalysis {
   explanation: string;
   misconceptions: string[];
-}> {
-  // Default system prompt for explanation and misconceptions
+  correctAnswer?: string;
+}
+
+export async function generateAIContent(apiKey: string, prompt: string, image?: File): Promise<MathProblemAnalysis> {
+  // Enhanced system prompt that requests structured output
   const systemPrompt = `You are an expert math teacher analyzing a math problem. 
-  First, provide a clear, detailed solution explaining the mathematical concepts and steps needed to solve this problem.
+  First, identify the correct answer choice (A, B, C, D, etc.) if this is a multiple-choice question, and explain why.
+  Then, provide a clear, detailed solution explaining the mathematical concepts and steps needed to solve this problem.
   Next, identify three common misconceptions students might have when approaching this problem, listing them separately.
-  For each misconception, explain what causes the error and how to fix it.`;
+  For each misconception, explain what causes the error and how to fix it.
+  
+  Format your response with clear sections:
+  1. Correct Answer: (provide the letter if multiple choice or the answer if open-ended)
+  2. Explanation: (provide the detailed solution)
+  3. Misconceptions: (list three common misconceptions)`;
 
   const fullPrompt = prompt 
     ? `${systemPrompt}\n\nAdditional instructions: ${prompt}`
@@ -78,9 +87,9 @@ export async function generateAIContent(apiKey: string, prompt: string, image?: 
     const content = data.choices[0].message.content;
     
     // Process the response to extract explanation and misconceptions
-    const parts = parseAIResponse(content);
+    const result = parseAIResponse(content);
     
-    return parts;
+    return result;
   } catch (error) {
     console.error('Error generating AI content:', error);
     toast.error(error instanceof Error ? error.message : 'Failed to generate content');
@@ -88,34 +97,41 @@ export async function generateAIContent(apiKey: string, prompt: string, image?: 
   }
 }
 
-function parseAIResponse(response: string): { explanation: string; misconceptions: string[] } {
+function parseAIResponse(response: string): MathProblemAnalysis {
   // Initialize default return values
-  const result = {
+  const result: MathProblemAnalysis = {
     explanation: '',
-    misconceptions: []
+    misconceptions: [],
+    correctAnswer: undefined
   };
   
-  // Look for sections in the response that might contain solution and misconceptions
-  const sections = response.split(/(?:^|\n)#+\s+/);
+  // Try to extract the correct answer
+  const answerMatch = response.match(/correct answer:?\s*([A-Z])/i);
+  if (answerMatch && answerMatch[1]) {
+    result.correctAnswer = answerMatch[1].toUpperCase();
+  }
   
-  // Extract the explanation (typically the first substantial section after any introduction)
-  const solutionSectionIndex = sections.findIndex(section => 
-    /solution|explanation|solving|answer|approach/i.test(section.split('\n')[0])
+  // Look for sections in the response
+  const sections = response.split(/(?:^|\n)#+\s+|(?:^|\n)\d+\.\s+/);
+  
+  // Extract explanation
+  const explanationSection = sections.find(section => 
+    /explanation|solution|solving|steps/i.test(section.split('\n')[0])
   );
   
-  if (solutionSectionIndex >= 0) {
-    result.explanation = sections[solutionSectionIndex].trim();
+  if (explanationSection) {
+    result.explanation = explanationSection.replace(/^[^\n]+\n/, '').trim();
   } else {
-    // If no explicit solution section, use first section that's not about misconceptions
+    // If no explicit explanation section, use first substantial section that's not about answer or misconceptions
     for (const section of sections) {
-      if (!/misconception|mistake|error|confusion/i.test(section.split('\n')[0])) {
+      if (!/answer|correct|misconception|mistake|error/i.test(section.split('\n')[0]) && section.length > 100) {
         result.explanation = section.trim();
         break;
       }
     }
   }
   
-  // Look for misconceptions section
+  // Look for misconceptions
   const misconceptionSection = sections.find(section => 
     /misconception|mistake|error|confusion/i.test(section.split('\n')[0])
   );
@@ -131,17 +147,22 @@ function parseAIResponse(response: string): { explanation: string; misconception
       .map(item => item.trim());
   }
   
-  // If we couldn't parse properly, just split the response into parts
-  if (!result.explanation) {
-    result.explanation = response;
+  // If we couldn't find misconceptions as list items, try to identify paragraphs
+  if (result.misconceptions.length === 0 && misconceptionSection) {
+    result.misconceptions = misconceptionSection
+      .split(/\n\n+/)
+      .slice(1) // Skip the header
+      .filter(paragraph => paragraph.trim().length > 50)
+      .map(paragraph => paragraph.trim());
   }
   
+  // If we still couldn't parse properly, extract misconceptions from the full text
   if (result.misconceptions.length === 0) {
-    // Try to extract misconceptions from the full text if we couldn't find them in sections
-    const matches = response.match(/(?:misconception|mistake|error|students might).*?(?:\n|$)([\s\S]*?)(?:\n\n|$)/gi);
+    const matches = response.match(/(?:misconception|mistake|error)[^\n]*\n+([^#]+?)(?=\n+(?:#|\d+\.|$))/gi);
     if (matches && matches.length > 0) {
-      // Take the first match as potentially containing misconceptions
-      result.misconceptions = [matches.join('\n').trim()];
+      result.misconceptions = matches.map(match => 
+        match.replace(/^[^\n]+\n+/, '').trim()
+      );
     }
   }
   

@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -12,12 +12,15 @@ import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import { Copy, Check, Code, Upload, PlusCircle, Wand2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { MathProblemAnalysis } from '@/services/AIService';
 
 interface CodeGeneratorProps {
-  onGenerateAI?: (prompt: string, image?: File) => Promise<void>;
+  onGenerateAI: (apiKey: string, prompt: string, image?: File) => Promise<MathProblemAnalysis>;
+  aiResult: MathProblemAnalysis | null;
 }
 
-const CodeGenerator: React.FC<CodeGeneratorProps> = ({ onGenerateAI }) => {
+const CodeGenerator: React.FC<CodeGeneratorProps> = ({ onGenerateAI, aiResult }) => {
+  const [apiKey, setApiKey] = useState<string>("");
   const [questionNumber, setQuestionNumber] = useState<number>(1);
   const [teksStandard, setTeksStandard] = useState<string>("");
   const [questionText, setQuestionText] = useState<string>("");
@@ -36,8 +39,26 @@ const CodeGenerator: React.FC<CodeGeneratorProps> = ({ onGenerateAI }) => {
   const [includeExtraCredit, setIncludeExtraCredit] = useState<boolean>(true);
   const [numberOfOptions, setNumberOfOptions] = useState<number>(4);
   const [generatedCode, setGeneratedCode] = useState<{ [key: string]: string }>({});
+  const [aiPrompt, setAiPrompt] = useState<string>("");
+  const [loading, setLoading] = useState<boolean>(false);
+  const [misconceptions, setMisconceptions] = useState<string[]>([]);
 
   const optionLabels = ["A", "B", "C", "D", "E", "F", "G", "H"];
+
+  // Effect to update form when AI result changes
+  useEffect(() => {
+    if (aiResult) {
+      if (aiResult.explanation) {
+        setExplanation(aiResult.explanation);
+      }
+      if (aiResult.misconceptions && aiResult.misconceptions.length > 0) {
+        setMisconceptions(aiResult.misconceptions);
+      }
+      if (aiResult.correctAnswer) {
+        setCorrectAnswer(aiResult.correctAnswer);
+      }
+    }
+  }, [aiResult]);
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -72,10 +93,18 @@ style: buttonStyles.white`;
 
     // Explanation code
     const expCode = `hidden: when (submit_button.pressCount>0 and q${questionNumber}_btn_ans.pressCount>0) false otherwise true
-content: "${explanation}"`;
+content: "${explanation.replace(/"/g, '\\"')}"`;
 
     // Extra credit code
     const ecCode = `hidden: when (submit_button.pressCount>0 and q${questionNumber}_btn_ans.pressCount>0 and not(q${questionNumber}_mc.matchesKey)) false otherwise true`;
+
+    // Misconceptions codes
+    const misconceptionCodes = misconceptions.map((misconception, index) => ({
+      [`err_${index + 1}_help`]: `hidden: when (submit_button.pressCount>0 and q${questionNumber}_btn_ans.pressCount>0 and not(q${questionNumber}_mc.matchesKey)) false otherwise true
+content: "${misconception.replace(/"/g, '\\"')}"`
+    }));
+
+    const allMisconceptionCodes = misconceptionCodes.reduce((acc, curr) => ({ ...acc, ...curr }), {});
 
     setGeneratedCode({
       teks: teksCode,
@@ -83,7 +112,8 @@ content: "${explanation}"`;
       feedback: feedbackCode,
       btn_ans: btnAnsCode,
       exp: expCode,
-      ec: ecCode
+      ec: ecCode,
+      ...allMisconceptionCodes
     });
 
     toast.success("Code generated successfully!");
@@ -103,16 +133,20 @@ content: "${explanation}"`;
       return;
     }
 
+    if (!apiKey) {
+      toast.error("Please enter your OpenRouter API key");
+      return;
+    }
+
     try {
-      if (onGenerateAI) {
-        await onGenerateAI(questionText, questionImage || undefined);
-        toast.success("AI generation request sent!");
-      } else {
-        toast.error("AI generation is not configured");
-      }
+      setLoading(true);
+      await onGenerateAI(apiKey, aiPrompt, questionImage || undefined);
+      toast.success("AI content generated!");
     } catch (error) {
       toast.error("Failed to generate AI content");
       console.error(error);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -130,7 +164,7 @@ content: "${explanation}"`;
         <Tabs defaultValue="question" className="w-full">
           <TabsList className="grid grid-cols-3 mb-6">
             <TabsTrigger value="question">Question Setup</TabsTrigger>
-            <TabsTrigger value="answers">Answers & Feedback</TabsTrigger>
+            <TabsTrigger value="answers">Answers & Content</TabsTrigger>
             <TabsTrigger value="code">Generated Code</TabsTrigger>
           </TabsList>
           
@@ -168,12 +202,13 @@ content: "${explanation}"`;
                     value={questionText}
                     onChange={(e) => setQuestionText(e.target.value)}
                     className="desmos-input min-h-[150px]"
+                    autoResize
                   />
                 </div>
               </div>
 
               <div className="space-y-4">
-                <Label>Question Image (Optional)</Label>
+                <Label>Question Image</Label>
                 <div className="border-2 border-dashed border-muted-foreground/25 rounded-md p-4 text-center hover:bg-accent/50 transition cursor-pointer"
                   onClick={() => document.getElementById('image-upload')?.click()}
                 >
@@ -283,25 +318,107 @@ content: "${explanation}"`;
                     value={explanation}
                     onChange={(e) => setExplanation(e.target.value)}
                     className="desmos-input min-h-[200px]"
+                    autoResize
                   />
+                </div>
+                
+                <div className="space-y-4">
+                  <Label>Misconceptions</Label>
+                  {misconceptions.length > 0 ? (
+                    misconceptions.map((misconception, index) => (
+                      <div key={index} className="space-y-1">
+                        <Label htmlFor={`misconception-${index}`}>Misconception {index + 1}</Label>
+                        <Textarea
+                          id={`misconception-${index}`}
+                          value={misconception}
+                          onChange={(e) => {
+                            const newMisconceptions = [...misconceptions];
+                            newMisconceptions[index] = e.target.value;
+                            setMisconceptions(newMisconceptions);
+                          }}
+                          className="desmos-input min-h-[100px]"
+                          autoResize
+                        />
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-muted-foreground text-sm">
+                      No misconceptions generated yet. Use AI to generate them.
+                    </div>
+                  )}
+                  
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setMisconceptions([...misconceptions, ""])}
+                    className="mt-2"
+                  >
+                    <PlusCircle className="h-4 w-4 mr-2" />
+                    Add Misconception
+                  </Button>
                 </div>
               </div>
             </div>
 
-            <div className="pt-4 space-y-4">
+            <div className="pt-6 border-t space-y-4">
               <div className="flex justify-between items-center">
-                <h3 className="text-lg font-medium">AI-powered generation</h3>
-                <Button 
-                  onClick={handleGenerateAI}
-                  className="desmos-button"
-                  disabled={!questionImage && !questionText}
-                >
-                  <Wand2 className="mr-2 h-4 w-4" />
-                  Generate with AI
-                </Button>
+                <h3 className="text-lg font-medium">AI-powered Generation</h3>
               </div>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="api-key" className="text-sm font-medium">
+                    OpenRouter API Key
+                  </Label>
+                  <Input
+                    id="api-key"
+                    type="password"
+                    placeholder="Enter your OpenRouter API key"
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                    className="desmos-input mt-1"
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Get your API key from <a href="https://openrouter.ai" target="_blank" rel="noreferrer" className="text-primary hover:underline">openrouter.ai</a>
+                  </p>
+                </div>
+                
+                <div>
+                  <Label htmlFor="ai-prompt" className="text-sm font-medium">
+                    Additional Instructions (Optional)
+                  </Label>
+                  <Textarea
+                    id="ai-prompt"
+                    placeholder="Additional instructions for the AI"
+                    value={aiPrompt}
+                    onChange={(e) => setAiPrompt(e.target.value)}
+                    className="desmos-input mt-1"
+                    autoResize
+                  />
+                </div>
+              </div>
+              
+              <Button 
+                onClick={handleGenerateAI}
+                className="desmos-button w-full"
+                disabled={(!questionImage && !questionText) || !apiKey || loading}
+              >
+                {loading ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Generating...
+                  </>
+                ) : (
+                  <>
+                    <Wand2 className="mr-2 h-4 w-4" />
+                    Generate Solution & Misconceptions
+                  </>
+                )}
+              </Button>
+              
               <p className="text-sm text-muted-foreground">
-                Upload an image of a problem to generate the correct answer explanation and common misconceptions using AI.
+                Upload a question image or provide question text to generate the correct answer, explanation, and common misconceptions using AI.
               </p>
             </div>
           </TabsContent>
@@ -455,14 +572,94 @@ content: "${explanation}"`;
                       </div>
                     </div>
                   )}
+                  
+                  {/* Add misconception codes display */}
+                  {Object.keys(generatedCode).filter(key => key.includes('err_')).map((key, index) => (
+                    <div key={key} className={`relative ${codeTab !== `err_${index + 1}_code` ? 'hidden' : ''}`}>
+                      <div className="absolute top-2 right-2">
+                        <Button 
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => copyToClipboard(`// For q${questionNumber}_${key}\n${generatedCode[key]}`)}
+                        >
+                          {copied ? (
+                            <Check className="h-4 w-4" />
+                          ) : (
+                            <Copy className="h-4 w-4" />
+                          )}
+                        </Button>
+                      </div>
+                      <div className="code-block">
+                        <pre>{`// For q${questionNumber}_${key}\n${generatedCode[key]}`}</pre>
+                      </div>
+                    </div>
+                  ))}
                 </>
+              )}
+              
+              {/* Add tabs for misconceptions if they exist */}
+              {misconceptions.length > 0 && Object.keys(generatedCode).length > 0 && (
+                <div className="mt-8">
+                  <h3 className="font-medium mb-3">Misconception Codes</h3>
+                  <Tabs defaultValue="err_1_code">
+                    <TabsList className="mb-4">
+                      {misconceptions.map((_, index) => (
+                        <TabsTrigger key={index} value={`err_${index + 1}_code`}>
+                          Misconception {index + 1}
+                        </TabsTrigger>
+                      ))}
+                    </TabsList>
+                    
+                    {misconceptions.map((_, index) => (
+                      <TabsContent key={index} value={`err_${index + 1}_code`}>
+                        <div className="relative">
+                          <div className="absolute top-2 right-2">
+                            <Button 
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => copyToClipboard(`// For q${questionNumber}_err_${index + 1}_help\n${generatedCode[`err_${index + 1}_help`] || ''}`)}
+                            >
+                              {copied ? (
+                                <Check className="h-4 w-4" />
+                              ) : (
+                                <Copy className="h-4 w-4" />
+                              )}
+                            </Button>
+                          </div>
+                          <div className="code-block">
+                            <pre>{`// For q${questionNumber}_err_${index + 1}_help\n${generatedCode[`err_${index + 1}_help`] || ''}`}</pre>
+                          </div>
+                        </div>
+                      </TabsContent>
+                    ))}
+                  </Tabs>
+                </div>
               )}
             </Tabs>
           </TabsContent>
         </Tabs>
       </CardContent>
       <CardFooter className="bg-muted/30 border-t flex justify-between">
-        <Button variant="outline">
+        <Button 
+          variant="outline"
+          onClick={() => {
+            setQuestionNumber(1);
+            setTeksStandard("");
+            setQuestionText("");
+            setQuestionImage(null);
+            setPreviewImage(null);
+            setCorrectAnswer("A");
+            setOptions({
+              "A": "",
+              "B": "",
+              "C": "",
+              "D": ""
+            });
+            setExplanation("");
+            setGeneratedCode({});
+            setMisconceptions([]);
+          }}
+        >
           Reset
         </Button>
         <Button onClick={generateCode} className="desmos-button">

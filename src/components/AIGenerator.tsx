@@ -8,19 +8,18 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import { Upload, Loader2, Copy, Check } from "lucide-react";
+import { MathProblemAnalysis } from '@/services/AIService';
 
 interface AIGeneratorProps {
-  onSubmit: (apiKey: string, prompt: string, image?: File) => Promise<void>;
+  onSubmit: (apiKey: string, prompt: string, image?: File) => Promise<MathProblemAnalysis>;
   loading: boolean;
-  result: string | null;
-  misconceptions: string[] | null;
+  result: MathProblemAnalysis | null;
 }
 
 const AIGenerator: React.FC<AIGeneratorProps> = ({ 
   onSubmit, 
   loading, 
-  result, 
-  misconceptions 
+  result
 }) => {
   const [apiKey, setApiKey] = useState<string>("");
   const [prompt, setPrompt] = useState<string>("");
@@ -48,7 +47,6 @@ const AIGenerator: React.FC<AIGeneratorProps> = ({
       await onSubmit(apiKey, prompt, image || undefined);
     } catch (error) {
       console.error(error);
-      toast.error("Failed to generate content");
     }
   };
 
@@ -156,9 +154,19 @@ const AIGenerator: React.FC<AIGeneratorProps> = ({
           </Button>
         </form>
 
-        {(result || misconceptions) && (
+        {result && (
           <div className="mt-8 pt-6 border-t">
             <h3 className="text-lg font-medium mb-4">Generated Content</h3>
+            
+            {result.correctAnswer && (
+              <div className="mb-4">
+                <h4 className="font-medium mb-2">Correct Answer</h4>
+                <div className="bg-muted p-3 rounded-md">
+                  <p className="font-medium text-lg">{result.correctAnswer}</p>
+                </div>
+              </div>
+            )}
+            
             <Tabs defaultValue="explanation" className="w-full">
               <TabsList className="mb-4">
                 <TabsTrigger value="explanation">Explanation</TabsTrigger>
@@ -166,21 +174,21 @@ const AIGenerator: React.FC<AIGeneratorProps> = ({
               </TabsList>
 
               <TabsContent value="explanation" className="animate-slide-up">
-                {result ? (
+                {result.explanation ? (
                   <div className="relative bg-muted p-4 rounded-md">
                     <Button
                       variant="ghost"
                       size="icon"
                       className="absolute top-2 right-2"
-                      onClick={() => copyToClipboard(result, 'result')}
+                      onClick={() => copyToClipboard(result.explanation, 'explanation')}
                     >
-                      {copied['result'] ? (
+                      {copied['explanation'] ? (
                         <Check className="h-4 w-4" />
                       ) : (
                         <Copy className="h-4 w-4" />
                       )}
                     </Button>
-                    <pre className="whitespace-pre-wrap text-sm">{result}</pre>
+                    <pre className="whitespace-pre-wrap text-sm">{result.explanation}</pre>
                   </div>
                 ) : (
                   <p className="text-center text-muted-foreground py-4">
@@ -190,9 +198,9 @@ const AIGenerator: React.FC<AIGeneratorProps> = ({
               </TabsContent>
 
               <TabsContent value="misconceptions" className="animate-slide-up">
-                {misconceptions?.length ? (
+                {result.misconceptions?.length ? (
                   <div className="space-y-4">
-                    {misconceptions.map((misconception, index) => (
+                    {result.misconceptions.map((misconception, index) => (
                       <div key={index} className="relative bg-muted p-4 rounded-md">
                         <Button
                           variant="ghost"

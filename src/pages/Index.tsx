@@ -4,14 +4,13 @@ import CodeGenerator from '@/components/CodeGenerator';
 import AIGenerator from '@/components/AIGenerator';
 import NavBar from '@/components/NavBar';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { generateAIContent } from '@/services/AIService';
+import { generateAIContent, MathProblemAnalysis } from '@/services/AIService';
 import { toast } from 'sonner';
 
 const Index = () => {
   const [currentTab, setCurrentTab] = useState<string>("generator");
   const [loading, setLoading] = useState<boolean>(false);
-  const [aiResult, setAiResult] = useState<string | null>(null);
-  const [aiMisconceptions, setAiMisconceptions] = useState<string[] | null>(null);
+  const [aiResult, setAiResult] = useState<MathProblemAnalysis | null>(null);
 
   const handleAISubmit = async (apiKey: string, prompt: string, image?: File) => {
     try {
@@ -19,8 +18,7 @@ const Index = () => {
       
       const result = await generateAIContent(apiKey, prompt, image);
       
-      setAiResult(result.explanation);
-      setAiMisconceptions(result.misconceptions);
+      setAiResult(result);
       
       toast.success("Content generated successfully!");
       
@@ -28,18 +26,15 @@ const Index = () => {
       if (currentTab === "ai") {
         // No need to switch tabs here
       }
+      
+      return result;
     } catch (error) {
       console.error(error);
       toast.error("Failed to generate content");
+      throw error;
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleGenerateAI = async (prompt: string, image?: File) => {
-    // Switch to the AI tab
-    setCurrentTab("ai");
-    toast.info("Please complete the API key setup to generate content");
   };
 
   return (
@@ -61,7 +56,10 @@ const Index = () => {
           </TabsList>
           
           <TabsContent value="generator" className="mt-0">
-            <CodeGenerator onGenerateAI={handleGenerateAI} />
+            <CodeGenerator 
+              onGenerateAI={handleAISubmit}
+              aiResult={aiResult} 
+            />
           </TabsContent>
           
           <TabsContent value="ai" className="mt-0">
@@ -69,7 +67,6 @@ const Index = () => {
               onSubmit={handleAISubmit}
               loading={loading}
               result={aiResult}
-              misconceptions={aiMisconceptions}
             />
           </TabsContent>
         </Tabs>
